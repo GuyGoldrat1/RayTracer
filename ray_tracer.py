@@ -187,28 +187,60 @@ def compute_specular_component(light, nearest_material,normal, intersection_to_l
             return shadow_factor*nearest_material.specular_color *(specular_intensity ** nearest_material.shininess) *(light.color * light.specular_intensity)
 
 #Reflection_ component
-def compute_reflection_component(hit_point, reflected_ray_direction, settings,surfaces,Materials,nearest_idx, lights ):
-    origin = hit_point
-    direction = reflected_ray_direction
-    color = (0,0,0)
-    reflection = Materials[nearest_idx].reflection_color
-    for k in range(int(settings.max_recursions)):
-        # Check for intersections with objects
-        nearest_object, distance_to_intersection, nearest_intersection_point, nearest_normal, nearest_index_material = intersect_objects(surfaces, origin, direction)
+# def compute_reflection_component(hit_point, reflected_ray_direction, settings,surfaces,Materials,nearest_idx, lights ):
+#     origin = hit_point
+#     direction = reflected_ray_direction
+#     color = (0,0,0)
+#     #reflection = Materials[nearest_idx].reflection_color
+#     shin = np.array([Materials[nearest_idx].shininess/50]*3)
+#     for k in range(2):#int(settings.max_recursions)):
+#         # Check for intersections with objects
+#         nearest_object, distance_to_intersection, nearest_intersection_point, nearest_normal, nearest_index_material = intersect_objects(surfaces, origin, direction)
 
-        if nearest_object is None:  # reflected ray didn't hit an object
-            shadowing= settings.background_color
-            color += reflection * shadowing
-            return color
-        else:
-            # Calculate the color of the pixel based on the intersection
-            shadowing = compute_diffuse_and_specular(nearest_intersection_point, reflected_ray_direction, nearest_normal,Materials[nearest_index_material], lights, surfaces)
-            color += reflection * shadowing
-        origin = nearest_intersection_point
-        direction = reflected( distance_to_intersection,nearest_normal)
-        reflection *= Materials[nearest_index_material].reflection_color
+#         if nearest_object is None:  # reflected ray didn't hit an object
+#             reflection= settings.background_color
+#             color +=  shin* reflection
+#             return color
+#         else:
+#             # Calculate the color of the pixel based on the intersection
+#             #reflection = compute_diffuse_and_specular(nearest_intersection_point, reflected_ray_direction, nearest_normal,Materials[nearest_index_material], lights, surfaces)
+#             reflection = Materials[nearest_index_material].reflection_color
+#             color += shin * reflection 
+        
+#         origin = nearest_intersection_point
+#         direction = reflected( distance_to_intersection,nearest_normal)
+#         #reflection *= Materials[nearest_index_material].reflection_color
 
-    return color
+#     return color
+
+def compute_reflection_component(hit_point, reflected_ray_direction, settings, surfaces, materials, nearest_idx, lights, max_recu):
+    # Offset the hit point to avoid self-intersection
+    reflection_origin = hit_point + reflected_ray_direction * 1e-5
+    original_reflection = materials[nearest_idx].reflection_color
+    if max_recu == 0:
+        return original_reflection*settings.background_color 
+    
+    # Trace the reflection ray
+    nearest_object, reflection_distance, reflection_point, reflection_normal, reflection_material_idx = intersect_objects(surfaces, reflection_origin, reflected_ray_direction)
+    
+    if nearest_object is not None:
+        reflection_material = materials[reflection_material_idx]
+        # Compute the color at the reflection point (this can include diffuse, specular, and potentially further reflection)
+        reflection_color = compute_diffuse_and_specular(reflection_point, reflected_ray_direction, reflection_normal, reflection_material, lights, surfaces)
+        
+        # Handle additional reflections if the material is reflective
+        if  reflection_material.shininess>1:
+            reflected_color = compute_reflection_component(reflection_point, reflected_ray_direction, settings, surfaces, materials, reflection_material_idx, lights, max_recu-1)
+            reflection_color += reflected_color * original_reflection
+        
+        return original_reflection*reflection_color 
+    
+    else:
+        # If the reflection ray hits nothing, return the background color
+        return original_reflection*settings.background_color
+
+
+
 def compute_diffuse_and_specular(intersection_point, ray_direction, nearest_normal, nearest_material, lights, surfaces):
     local_shading = np.zeros((3))
     for light in lights:
@@ -219,7 +251,7 @@ def compute_diffuse_and_specular(intersection_point, ray_direction, nearest_norm
         if In_shadow:
             shadow_factor = 1.0 - light.shadow_intensity
 
-        else:
+        else:   
             shadow_factor = 1.0
 
         local_shading += compute_diffuse_component(light, nearest_material, nearest_normal, intersection_to_light, shadow_factor)
@@ -228,42 +260,10 @@ def compute_diffuse_and_specular(intersection_point, ray_direction, nearest_norm
 
     return local_shading
 
-# def get_color(intersection_point, ray_direction,camera_position, nearest_normal, nearest_material, lights, surfaces, depth,scene_settings):
-#     color = (0, 0, 0)
-#     reflection = 1
-#     origin = camera_position
-#     direction = ray_direction
-#     for k in range(depth):
-#         diffuse= (0,0,0)
-#         specular = (0,0,0)
-#         illumination = np.zeros((3))
-#         for light in lights:
-#             # Shadow check.Offset shadow ray origin to avoid self-intersection issues
-#             In_shadow,intersection_to_light,intersection_to_light_distance = check_shadow_occlusion(intersection_point, nearest_normal, light, surfaces)
-#             if In_shadow:
-#                 shadow_factor = 1.0 - light.shadow_intensity
-#
-#             else:
-#                 shadow_factor = 1.0
-#
-#             illumination += compute_diffuse_component(light, nearest_material,nearest_normal, intersection_to_light,shadow_factor)
-#             illumination += compute_specular_component(light, nearest_material, nearest_normal, intersection_to_light, ray_direction, shadow_factor)
-#
-#
-#         return np.clip(illumination, 0, 1)
-#
-
-
-
 
 def save_image(image_array):
     image = Image.fromarray(np.uint8(image_array * 255))
     image.save("rendered_image3.png")
-
-# def save_image(image_array):
-# #     # # Save the image to a file
-# #     # image.save("scenes/Spheres.png")
-
 
 
 def main():
@@ -309,12 +309,17 @@ def main():
                 material = Materials[nearest_index_material]
                 shading_hit_point = compute_diffuse_and_specular(nearest_intersection_point,ray_direction,nearest_normal, material, Lights,Surfaces)
                 diffuse_and_specular_color =shading_hit_point *(1-material.transparency)
+
+
                 reflected_ray_direction= reflected(ray_direction,nearest_normal )
-                reflection_color = compute_reflection_component(nearest_intersection_point,reflected_ray_direction, scene_settings,Surfaces, Materials,nearest_index_material, Lights)
-                color += diffuse_and_specular_color + reflection_color
-                image_array[j, i] = np.clip(color, 0, 1)
+                reflection_color = compute_reflection_component(nearest_intersection_point,reflected_ray_direction, scene_settings,Surfaces, Materials ,nearest_index_material, Lights, scene_settings.max_recursions)
+
+                color = (scene_settings.background_color * np.array([material.transparency]*3)) + diffuse_and_specular_color + reflection_color
+                image_array[height - j - 1, i] = np.clip(color, 0, 1)  
+
             else:
-                image_array[j, i] = scene_settings.background_color
+                image_array[height - j - 1, i] = scene_settings.background_color  
+
     save_image(image_array)
 
 np.set_printoptions(precision=3, suppress=True)
